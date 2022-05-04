@@ -22,6 +22,9 @@
 #include "cuda_runtime.h"
 #include "cublas_v2.h"
 #include <sstream>
+#elif defined(PLAIDML)
+#include "plaidml/edsl/edsl.h"
+#include "plaidml/testenv.h"
 #elif defined(MLIR_CUDA)
 #include "cuda_runtime.h"
 #include <sstream>
@@ -156,6 +159,25 @@ tvm::runtime::Module create_module() {
 }
 #endif
 
+#if defined(PLAIDML)
+void SetUp() {
+  plaidml::init();
+  plaidml::edsl::init();
+  plaidml::op::init();
+  plaidml::exec::init();
+  plaidml::Settings::set("PLAIDML_DEVICE", "llvm_cpu.0");
+  plaidml::Settings::set("PLAIDML_TARGET", "llvm_cpu");
+}
+
+plaidml::edsl::Tensor GEMM(const plaidml::edsl::Tensor& A, const plaidml::edsl::Tensor& B, const plaidml::edsl::Tensor& C, float alpha, float beta) {
+  plaidml::edsl::TensorDim I, J, K;
+  plaidml::edsl::TensorIndex i, j, k;
+  A.bind_dims(I, K);
+  B.bind_dims(K, J);
+  return plaidml::edsl::Contraction().outShape(I, J).outAccess(i, j).sum(A(i, k) * B(k, j)) * alpha + beta * C;
+}
+#endif
+
 void init_matrix(float *a, int nrows, int ncols) {
   for (int j = 0; j < ncols; j++) {
     for (int i = 0; i < nrows; i++) {
@@ -277,6 +299,40 @@ float *A, *B, *C;
   float alpha = 1.0;
   float beta = 0.0;
 
+#if defined(PLAIDML)
+  SetUp();
+  auto Placeholder_A = plaidml::edsl::Placeholder(plaidml::DType::FLOAT32, {MDIM, KDIM});
+  auto Placeholder_B = plaidml::edsl::Placeholder(plaidml::DType::FLOAT32, {KDIM, NDIM});
+  auto Placeholder_C = plaidml::edsl::Placeholder(plaidml::DType::FLOAT32, {MDIM, NDIM});
+  auto contraction = GEMM(Placeholder_A, Placeholder_B, Placeholder_C, alpha, beta);
+  auto program = plaidml::edsl::buildProgram("gemm", 
+      {Placeholder_A, Placeholder_B, Placeholder_C}, {contraction});
+  plaidml::Runner runner(program);
+  std::vector<float> data_A(MDIM * KDIM);
+  std::vector<float> data_B(KDIM * NDIM);
+  std::vector<float> data_C(MDIM * NDIM);
+  for (size_t i = 0; i < MDIM * KDIM; i ++) { data_A[i] = A[i]; }
+  for (size_t i = 0; i < KDIM * NDIM; i ++) { data_B[i] = B[i]; }
+  for (size_t i = 0; i < MDIM * NDIM; i ++) { data_C[i] = C[i]; }
+  std::vector<plaidml::Buffer> inputBuffers;
+  std::vector<plaidml::Buffer> outputBuffers;
+  std::vector<plaidml::MultiBuffer> inputs = {data_A, data_B, data_C};
+  auto inputShapes = program.inputs();
+  for (size_t i = 0; i < inputs.size(); i ++) {
+    std::visit(
+      [&](auto&& vec) {
+        plaidml::Buffer buffer{vec, inputShapes[i]};
+        inputBuffers.emplace_back(buffer);
+      },
+      inputs[i]
+    );
+  }
+  for (auto shape : program.outputs()) {
+    outputBuffers.emplace_back(shape);
+  }
+  auto executable = plaidml::exec::Executable(program);
+#endif
+
 #ifdef RUY
   ruy::Context context;
   context.set_max_num_threads(1);
@@ -321,6 +377,8 @@ float *A, *B, *C;
     ruy::Mul(lhs, rhs, mul_params, &context, &dst);
 #elif defined(TVM)
     matmul(x, y, z);
+#elif defined(PLAIDML)
+    executable.run(inputBuffers, outputBuffers);
 #elif defined(MLIR) || defined(MLIR_CUDA)
 #ifdef COLUMN_MAJOR
     matmul(A, A, 0, MDIM, KDIM, 1, LDA,
@@ -354,6 +412,14 @@ float *A, *B, *C;
 #endif
 #endif
   }
+
+#if defined(PLAIDML)
+  auto data = reinterpret_cast<float*>(outputBuffers[0].data());
+  std::vector<float> actual(data, data + MDIM*NDIM);
+  for (int i = 0; i < MDIM * NDIM; i ++) {
+    C[i] = actual[i];
+  }
+#endif
 
 #if defined(TVM)
   TVMArrayCopyToBytes(z, C, MDIM * NDIM * sizeof(float));
