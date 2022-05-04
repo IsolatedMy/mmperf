@@ -43,6 +43,7 @@ BAR_COLORS = {'mkl': 'cornflowerblue',
               'nodai': 'orangered',
               'ireevmvx': 'thistle',
               'ireedylib': 'aqua',
+              'plaidml': 'red',
               'ireecuda': 'deeppink',
               'mlir-sandbox': 'mediumseagreen',
               'triton': 'purple',
@@ -58,6 +59,7 @@ BENCHMARK_ENV.update({
     "VECLIB_MAXIMUM_THREADS": "1",
     "OMP_NUM_THREADS": "1",
     "TVM_NUM_THREADS": "1",
+    "PLAIDML_NUM_THREADS": "1"
 })
 
 def path_expand(s):
