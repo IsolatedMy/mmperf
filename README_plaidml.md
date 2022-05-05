@@ -58,4 +58,6 @@ Note: Although GPU information is displayed in figure, but the execution didn't 
 
 ## Results for SGEMM
 
+Note: The above result is tested with `alpha = 1` and `beta = 0` in the definition of SGEMM C = alpha * AB + beta * C. This result is tested with `alpha = 1` and `beta = 1`. 
+
 <img src="assets/matmul_sgemm.png">
